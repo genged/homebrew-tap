@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+usage_command=${0#./}
+UPDATE_FORMULA_USAGE_COMMAND="$usage_command" exec "$script_dir/update-formula" runfree "$@"

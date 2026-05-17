@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  if [[ -n "${UPDATE_FORMULA_USAGE_COMMAND:-}" ]]; then
+    cat >&2 <<EOF
+Usage:
+  $UPDATE_FORMULA_USAGE_COMMAND VERSION
+
+Example:
+  $UPDATE_FORMULA_USAGE_COMMAND 0.1.0
+EOF
+    return
+  fi
+
+  cat >&2 <<'EOF'
+Usage:
+  script/update-formula PRODUCT VERSION
+
+Examples:
+  script/update-formula runfree 0.1.0
+  script/update-formula capshelf 0.1.0
+EOF
+}
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+die_with_usage() {
+  echo "$*" >&2
+  usage
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+join_by() {
+  local delimiter="$1"
+  local joined=""
+  local item
+  shift
+  for item in "$@"; do
+    if [[ -n "$joined" ]]; then
+      joined="$joined$delimiter"
+    fi
+    joined="$joined$item"
+  done
+  printf '%s\n' "$joined"
+}
+
+fetch_checksum_text() {
+  local checksum_file="$asset_prefix-$version.sha256"
+  local download_dir
+
+  if curl -fsSL "$checksum_url" 2>/dev/null; then
+    return
+  fi
+
+  echo "Public download failed for $checksum_url; trying gh release download" >&2
+  require_command gh
+
+  download_dir=$(mktemp -d)
+  if ! gh release download "v$version" \
+    --repo "$release_repo" \
+    --pattern "$checksum_file" \
+    --dir "$download_dir" \
+    --clobber >&2; then
+    rm -rf "$download_dir"
+    die "Failed to fetch $checksum_file from $release_repo release v$version"
+  fi
+
+  if [[ ! -f "$download_dir/$checksum_file" ]]; then
+    rm -rf "$download_dir"
+    die "Downloaded release did not include $checksum_file"
+  fi
+
+  cat "$download_dir/$checksum_file"
+  rm -rf "$download_dir"
+}
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+
+product=${1:-}
+version=${2:-}
+
+if [[ "$#" -ne 2 ]]; then
+  if [[ -n "${UPDATE_FORMULA_USAGE_COMMAND:-}" ]]; then
+    if [[ "$#" -eq 1 ]]; then
+      die_with_usage "Missing VERSION"
+    fi
+    die_with_usage "Expected exactly one VERSION argument"
+  fi
+
+  if [[ "$#" -eq 0 ]]; then
+    die_with_usage "Missing PRODUCT and VERSION"
+  elif [[ "$#" -eq 1 ]]; then
+    die_with_usage "Missing VERSION"
+  fi
+  die_with_usage "Expected exactly two arguments"
+fi
+
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+  die_with_usage "VERSION must look like 0.1.0"
+fi
+
+case "$product" in
+  runfree)
+    formula_path="$repo_root/Formula/runfree.rb"
+    release_repo="genged/runfree"
+    asset_prefix="runfree"
+    platforms=(darwin-arm64 darwin-x64)
+    labels=("macOS arm64" "macOS Intel")
+    ;;
+  capshelf)
+    formula_path="$repo_root/Formula/capshelf.rb"
+    release_repo="genged/capshelf"
+    asset_prefix="capshelf"
+    platforms=(darwin-arm64 darwin-x64 linux-arm64 linux-x64)
+    labels=("macOS arm64" "macOS Intel" "Linux arm64" "Linux x64")
+    ;;
+  *)
+    die "Unknown product: $product"
+    ;;
+esac
+
+[[ -f "$formula_path" ]] || die "Formula not found: $formula_path"
+
+require_command curl
+require_command tr
+
+checksum_url="https://github.com/$release_repo/releases/download/v$version/$asset_prefix-$version.sha256"
+checksum_text=$(fetch_checksum_text)
+
+checksums=()
+for _platform in "${platforms[@]}"; do
+  checksums+=("")
+done
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+  read -r sha file _rest <<<"$line"
+  [[ "${sha:-}" =~ ^[0-9A-Fa-f]{64}$ && -n "${file:-}" ]] || continue
+
+  basename=${file##*/}
+  basename=${basename#\*}
+
+  for i in "${!platforms[@]}"; do
+    expected="$asset_prefix-$version-${platforms[$i]}.tar.gz"
+    if [[ "$basename" == "$expected" ]]; then
+      checksums[$i]=$(printf '%s' "$sha" | tr '[:upper:]' '[:lower:]')
+    fi
+  done
+done <<<"$checksum_text"
+
+missing=()
+for i in "${!platforms[@]}"; do
+  if [[ -z "${checksums[$i]}" ]]; then
+    missing+=("${platforms[$i]}")
+  fi
+done
+
+if [[ "${#missing[@]}" -gt 0 ]]; then
+  echo "Missing checksums for: $(join_by ', ' "${missing[@]}")" >&2
+  echo "Expected entries in $checksum_url:" >&2
+  for platform in "${missing[@]}"; do
+    echo "  $asset_prefix-$version-$platform.tar.gz" >&2
+  done
+  exit 1
+fi
+
+tmp_formula=$(mktemp "$formula_path.tmp.XXXXXX")
+cleanup() {
+  rm -f "$tmp_formula"
+}
+trap cleanup EXIT
+
+url_counts=()
+for _platform in "${platforms[@]}"; do
+  url_counts+=("0")
+done
+
+version_count=0
+sha_count=0
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if [[ "$line" =~ ^[[:space:]]*version\ \".*\"$ ]]; then
+    version_count=$((version_count + 1))
+    printf '  version "%s"\n' "$version"
+    continue
+  fi
+
+  replaced_url=false
+  for i in "${!platforms[@]}"; do
+    platform=${platforms[$i]}
+    url_regex="^([[:space:]]*)url \"https://github[.]com/$release_repo/releases/download/v[^/]+/$asset_prefix-.+-$platform[.]tar[.]gz\"$"
+    if [[ "$line" =~ $url_regex ]]; then
+      url_counts[$i]=$((url_counts[$i] + 1))
+      printf '%surl "https://github.com/%s/releases/download/v%s/%s-%s-%s.tar.gz"\n' \
+        "${BASH_REMATCH[1]}" "$release_repo" "$version" "$asset_prefix" "$version" "$platform"
+      replaced_url=true
+      break
+    fi
+  done
+
+  if [[ "$replaced_url" == true ]]; then
+    continue
+  fi
+
+  if [[ "$line" =~ ^([[:space:]]*)sha256\ \"[0-9A-Fa-f]{64}\"$ ]]; then
+    if [[ "$sha_count" -ge "${#checksums[@]}" ]]; then
+      die "Formula has more than ${#checksums[@]} sha256 entries"
+    fi
+    printf '%ssha256 "%s"\n' "${BASH_REMATCH[1]}" "${checksums[$sha_count]}"
+    sha_count=$((sha_count + 1))
+    continue
+  fi
+
+  printf '%s\n' "$line"
+done <"$formula_path" >"$tmp_formula"
+
+[[ "$version_count" -eq 1 ]] || die "Formula has $version_count version entries; expected 1"
+[[ "$sha_count" -eq "${#platforms[@]}" ]] || die "Formula has $sha_count sha256 entries; expected ${#platforms[@]}"
+
+for i in "${!platforms[@]}"; do
+  platform=${platforms[$i]}
+  [[ "${url_counts[$i]}" -eq 1 ]] || die "Formula has ${url_counts[$i]} URL entries for $platform; expected 1"
+done
+
+mv "$tmp_formula" "$formula_path"
+trap - EXIT
+
+echo "Updated Formula/$asset_prefix.rb for $asset_prefix $version"
+for i in "${!platforms[@]}"; do
+  echo "  ${labels[$i]}: ${checksums[$i]}"
+done
