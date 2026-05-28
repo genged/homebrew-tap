@@ -4,7 +4,7 @@ class Capshelf < Formula
 
   version "0.1.0"
 
-  depends_on "git"
+  uses_from_macos "git"
 
   on_macos do
     if Hardware::CPU.arm?
@@ -16,15 +16,15 @@ class Capshelf < Formula
     end
   end
 
-  on_linux do
-    if Hardware::CPU.arm?
-      url "https://github.com/genged/capshelf/releases/download/v0.1.0/capshelf-0.1.0-linux-arm64.tar.gz"
-      sha256 "422e74c165ae6afec4a9eb66a3f00a6a7b23bf3e143104b5f5376b44f188d128"
-    else
-      url "https://github.com/genged/capshelf/releases/download/v0.1.0/capshelf-0.1.0-linux-x64.tar.gz"
-      sha256 "5a33316b259d97bfe747dc841a695f4ccc2db5c3c4cfefdab6cefef38b3f1795"
-    end
-  end
+#   on_linux do
+#     if Hardware::CPU.arm?
+#       url "https://github.com/genged/capshelf/releases/download/v0.1.0/capshelf-0.1.0-linux-arm64.tar.gz"
+#       sha256 "422e74c165ae6afec4a9eb66a3f00a6a7b23bf3e143104b5f5376b44f188d128"
+#     else
+#       url "https://github.com/genged/capshelf/releases/download/v0.1.0/capshelf-0.1.0-linux-x64.tar.gz"
+#       sha256 "5a33316b259d97bfe747dc841a695f4ccc2db5c3c4cfefdab6cefef38b3f1795"
+#     end
+#   end
 
   head do
     url "https://github.com/genged/capshelf.git", branch: "main"
