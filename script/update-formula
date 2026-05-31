@@ -120,7 +120,8 @@ case "$product" in
     formula_path="$repo_root/Formula/capshelf.rb"
     release_repo="genged/capshelf"
     asset_prefix="capshelf"
-    platforms=(darwin-arm64 darwin-x64 linux-arm64 linux-x64)
+    #platforms=(darwin-arm64 darwin-x64 linux-arm64 linux-x64)
+    platforms=(darwin-arm64 darwin-x64)
     labels=("macOS arm64" "macOS Intel" "Linux arm64" "Linux x64")
     ;;
   *)
