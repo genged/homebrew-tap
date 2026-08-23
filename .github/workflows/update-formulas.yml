@@ -1,0 +1,74 @@
+name: Update formulas
+
+on:
+  schedule:
+    # Hourly, off the hour to avoid the busiest scheduling slots.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      product:
+        description: Product to sync
+        type: choice
+        options:
+          - capshelf
+        default: capshelf
+      version:
+        description: Version to sync to (defaults to the latest release)
+        type: string
+        required: false
+  # Disabled for now. Uncomment to let a product's release workflow push an update
+  # the moment it publishes, instead of waiting for the next hourly run:
+  #   gh api repos/genged/homebrew-tap/dispatches \
+  #     -f event_type=release-published \
+  #     -F client_payload[product]=capshelf \
+  #     -F client_payload[version]="$VERSION"
+  # That call needs a PAT with contents:write on this repo stored as a secret in
+  # the release repo; the built-in GITHUB_TOKEN cannot dispatch across repos. The
+  # client_payload references below are inert while this trigger is off, and are
+  # left in place so re-enabling is just uncommenting these two lines.
+  #
+  # repository_dispatch:
+  #   types: [release-published]
+
+permissions:
+  contents: write
+
+# Keyed per product, deliberately not per version. Two runs for the same product
+# edit the same formula lines, so letting them overlap only produces a rebase
+# conflict; serializing them is what actually makes the push safe. Different
+# products touch different files and may overlap freely — sync-formula rebases
+# before pushing, which resolves that case cleanly.
+#
+# The cost is that GitHub keeps just one pending run per group, so a queued run
+# can be replaced by a newer one. For a tap that tracks the latest release that is
+# the right outcome: the survivor re-resolves at run time and lands the newest
+# version, and skipping a superseded intermediate is what we want anyway. To pin
+# an older version deliberately, run script/update-capshelf-formula locally.
+concurrency:
+  group: update-formulas-${{ github.event.inputs.product || github.event.client_payload.product || 'capshelf' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync formula
+        env:
+          PRODUCT: ${{ github.event.inputs.product || github.event.client_payload.product || 'capshelf' }}
+          VERSION: ${{ github.event.inputs.version || github.event.client_payload.version || '' }}
+          # update-formula falls back to `gh release download` when the anonymous
+          # download fails, and gh has no session on a hosted runner without this.
+          # Reading a private release repo would need a PAT instead.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          args=(--wait 600 --commit --push)
+          if [[ -n "$VERSION" ]]; then
+            args+=(--version "$VERSION")
+          fi
+
+          script/sync-formula "$PRODUCT" "${args[@]}"

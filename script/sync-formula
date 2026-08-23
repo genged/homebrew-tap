@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+
+# shellcheck source=lib/common.sh
+. "$script_dir/lib/common.sh"
+# shellcheck source=lib/products.sh
+. "$script_dir/lib/products.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Sync a formula with the latest published release of its product.
+
+Usage:
+  script/sync-formula PRODUCT [options]
+
+Options:
+  --version VERSION   Sync to VERSION instead of the latest release
+  --wait SECONDS      Retry for up to SECONDS while release assets are missing (default: 0)
+  --commit            Commit the formula change
+  --push              Push the commit (implies --commit)
+  -h, --help          Show this help
+
+Examples:
+  script/sync-formula capshelf
+  script/sync-formula capshelf --wait 600 --commit --push
+EOF
+}
+
+# Latest non-draft, non-prerelease version, without the leading "v".
+latest_version() {
+  local tag=""
+
+  if command -v jq >/dev/null 2>&1; then
+    tag=$(curl -fsSL "${CURL_OPTS[@]}" \
+      "https://api.github.com/repos/$release_repo/releases/latest" |
+      jq -r '.tag_name // empty')
+  fi
+
+  if [[ -z "$tag" ]]; then
+    # Fall back to the redirect from the "latest release" page, which has the
+    # same draft/prerelease semantics as the API and needs no JSON parsing.
+    local url
+    url=$(curl -fsSL "${CURL_OPTS[@]}" -o /dev/null -w '%{url_effective}' \
+      "https://github.com/$release_repo/releases/latest")
+    tag=${url##*/tag/}
+    [[ "$tag" != "$url" ]] || tag=""
+  fi
+
+  [[ -n "$tag" ]] || die "Could not determine the latest release of $release_repo"
+  printf '%s\n' "${tag#v}"
+}
+
+formula_version() {
+  local line
+  line=$(grep -m1 -E '^[[:space:]]*version "' "$formula_path") ||
+    die "No version entry in $formula_path"
+  line=${line#*\"}
+  printf '%s\n' "${line%%\"*}"
+}
+
+# True when $1 is strictly newer than $2. Compares the numeric X.Y.Z core, then
+# treats a plain release as newer than the same core with a pre-release suffix.
+# Done in bash rather than `sort -V` so the downgrade guard cannot fail open on
+# a sort that lacks version sorting.
+is_newer() {
+  # Build metadata carries no precedence, so drop it before anything else;
+  # only a "-" pre-release lowers a version against the same numeric core.
+  local a=${1%%+*}
+  local b=${2%%+*}
+  local -a a_parts b_parts
+  local i a_part b_part
+
+  IFS=. read -r -a a_parts <<<"${a%%-*}"
+  IFS=. read -r -a b_parts <<<"${b%%-*}"
+
+  for i in 0 1 2; do
+    # 10# keeps a zero-padded component from being read as octal.
+    a_part=$((10#${a_parts[$i]:-0}))
+    b_part=$((10#${b_parts[$i]:-0}))
+    [[ "$a_part" -gt "$b_part" ]] && return 0
+    [[ "$a_part" -lt "$b_part" ]] && return 1
+  done
+
+  # Equal cores: only a "-" pre-release on one side breaks the tie.
+  [[ "$a" != *-* && "$b" == *-* ]]
+}
+
+# Polls for the release checksum asset, returning nonzero if it never appeared
+# within the retry budget. This is deliberately an anonymous, individually
+# bounded request: it decides only how long to wait, never whether the update may
+# proceed, so a restricted repo that 404s here still reaches update-formula's
+# authenticated `gh release download` fallback.
+#
+# --wait bounds the retry loop, and each request is separately capped, so the
+# worst case is the budget plus one request. Capping a request by the budget
+# remaining instead would be worse: curl reads --max-time 0 as "no limit", so the
+# default single probe would become unbounded, and a near-zero cap would abandon
+# a probe that was merely slow.
+wait_for_checksum() {
+  local deadline=$((SECONDS + wait_seconds))
+  local remaining
+
+  while true; do
+    if curl -fsL "${CURL_OPTS[@]}" -o /dev/null "$checksum_url"; then
+      return 0
+    fi
+
+    remaining=$((deadline - SECONDS))
+    [[ "$remaining" -gt 0 ]] || return 1
+
+    echo "Waiting for $asset_prefix-$version.sha256 (${remaining}s left)" >&2
+    sleep $((remaining < 15 ? remaining : 15))
+  done
+}
+
+emit_output() {
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    printf '%s=%s\n' "$1" "$2" >>"$GITHUB_OUTPUT"
+  fi
+}
+
+# Pushes the commit, rebasing onto anything that landed in the meantime. Syncs
+# for different products run concurrently and target the same branch, so a
+# non-fast-forward rejection is an expected outcome here, not an exceptional one.
+push_commit() {
+  local branch attempt
+  branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD)
+  [[ "$branch" != "HEAD" ]] || die "Cannot push from a detached HEAD"
+
+  for attempt in 1 2 3; do
+    if git -C "$repo_root" push origin "HEAD:$branch"; then
+      echo "Pushed to $branch"
+      return 0
+    fi
+
+    [[ "$attempt" -lt 3 ]] || break
+
+    echo "Push rejected; rebasing onto origin/$branch and retrying" >&2
+    git -C "$repo_root" fetch origin "$branch" || die "Could not fetch origin/$branch"
+    git -C "$repo_root" rebase --autostash "origin/$branch" ||
+      die "Could not rebase onto origin/$branch"
+  done
+
+  die "Could not push to $branch after 3 attempts"
+}
+
+# Report the formula as already in sync and exit successfully. $1 is an optional
+# note explaining why no re-check happened.
+report_in_sync() {
+  echo "$product is already at $version${1:+ ($1)}"
+  emit_output updated false
+  emit_output version "$version"
+  exit 0
+}
+
+product=""
+version=""
+wait_seconds=0
+do_commit=false
+do_push=false
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ "$#" -ge 2 ]] || die_with_usage "Missing value for --version"
+      version="$2"
+      shift 2
+      ;;
+    --wait)
+      [[ "$#" -ge 2 ]] || die_with_usage "Missing value for --wait"
+      wait_seconds="$2"
+      shift 2
+      ;;
+    --commit)
+      do_commit=true
+      shift
+      ;;
+    --push)
+      do_commit=true
+      do_push=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      die_with_usage "Unknown option: $1"
+      ;;
+    *)
+      [[ -z "$product" ]] || die_with_usage "Expected exactly one PRODUCT argument"
+      product="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$product" ]] || die_with_usage "Missing PRODUCT"
+[[ "$wait_seconds" =~ ^[0-9]+$ ]] || die_with_usage "--wait must be a whole number of seconds"
+
+load_product "$product" || die "Unknown product: $product"
+
+formula_path="$repo_root/$product_formula_path"
+release_repo="$product_release_repo"
+asset_prefix="$product_asset_prefix"
+
+[[ -f "$formula_path" ]] || die "Formula not found: $formula_path"
+
+require_command curl
+require_command git
+
+pinned=true
+if [[ -z "$version" ]]; then
+  pinned=false
+  version=$(latest_version)
+fi
+
+version=${version#v}
+[[ "$version" =~ $VERSION_PATTERN ]] ||
+  die "VERSION must look like 0.1.0, got: $version"
+
+current=$(formula_version)
+
+# A scheduled run should never walk the formula backwards, which is what a
+# retracted release or a re-pointed "latest" tag would otherwise do.
+if [[ "$pinned" == false ]] && is_newer "$current" "$version"; then
+  echo "Formula version $current is newer than the latest release $version; leaving it alone" >&2
+  emit_output updated false
+  emit_output version "$current"
+  exit 0
+fi
+
+# A matching version does not prove the formula matches the published release, so
+# re-run the updater either way and let the resulting diff decide. What happens
+# when it does differ depends on who asked:
+#
+#   scheduled (unpinned)  refuse and alert -- see the checksum check below
+#   explicit --version    repair, because a human deliberately asked for it
+#
+# A scheduled re-check also has nothing urgent to do, so it must neither wait on
+# missing assets nor fail merely because it could not reach them.
+recheck_only=false
+if [[ "$pinned" == false ]] && [[ "$current" == "$version" ]]; then
+  recheck_only=true
+  wait_seconds=0
+fi
+
+checksum_url=$(product_checksum_url "$version")
+
+# A re-check has nothing urgent to do, so if the assets are not plainly reachable
+# it stops here instead of spending a scheduled run on the authenticated
+# fallback. A real version bump always continues to the updater below.
+if ! wait_for_checksum && [[ "$recheck_only" == true ]]; then
+  report_in_sync "release assets not reachable, not re-checked"
+fi
+
+# Kept as a file rather than a string so the rewrite can be undone byte-for-byte
+# if the checksum check below rejects it.
+formula_backup=$(mktemp)
+trap 'rm -f "$formula_backup"' EXIT
+cp "$formula_path" "$formula_backup"
+
+# Reached even when the poll above timed out: update-formula retries the download
+# with `gh`, which can see assets that anonymous curl cannot.
+if ! updater_output=$("$script_dir/update-formula" "$product" "$version"); then
+  die "Could not update $product to $version"
+fi
+
+if cmp -s "$formula_backup" "$formula_path"; then
+  report_in_sync
+fi
+
+# Same version, different checksums: the published assets for a version already
+# shipped have been replaced. A formula's sha256 is a pin, and rewriting it here
+# would re-arm that tripwire around whatever the new bytes are, turning a
+# detectable supply-chain change into a silently accepted one. Re-fetching the
+# manifest proves nothing either, since it ships from the same release as the
+# artifacts it describes. So refuse, put the formula back, and make a human look.
+#
+# This is indistinguishable from the formula simply having recorded a wrong
+# checksum, which is why repairing it is left to the deliberate pinned path.
+if [[ "$recheck_only" == true ]]; then
+  cp "$formula_backup" "$formula_path"
+  emit_output updated false
+  emit_output version "$version"
+  emit_output checksum_mismatch true
+  die "Release assets for $product $version changed after publication.
+
+The formula already pins $version, but the published checksums no longer match
+the ones it records:
+  $checksum_url
+
+Refusing to update automatically -- a changed artifact under an existing tag is
+exactly what the pin exists to catch. Investigate the release, and if the change
+is legitimate, re-sync deliberately:
+  script/sync-formula $product --version $version --commit"
+fi
+
+printf '%s\n' "$updater_output"
+
+emit_output updated true
+emit_output version "$version"
+emit_output previous_version "$current"
+
+if [[ "$do_commit" == false ]]; then
+  exit 0
+fi
+
+if git -C "$repo_root" diff --quiet HEAD -- "$product_formula_path"; then
+  echo "Formula content unchanged; nothing to commit"
+  exit 0
+fi
+
+# Scoped to the formula pathspec: a local checkout may already have unrelated
+# staged work, and a sync must neither commit it nor disturb it.
+git -C "$repo_root" commit -m "Bump $product to $version" -- "$product_formula_path"
+echo "Committed $product $current -> $version"
+
+if [[ "$do_push" == true ]]; then
+  push_commit
+fi

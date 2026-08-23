@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+
+# shellcheck source=lib/common.sh
+. "$script_dir/lib/common.sh"
+# shellcheck source=lib/products.sh
+. "$script_dir/lib/products.sh"
+
 usage() {
   if [[ -n "${UPDATE_FORMULA_USAGE_COMMAND:-}" ]]; then
     cat >&2 <<EOF
@@ -23,21 +31,6 @@ Examples:
 EOF
 }
 
-die() {
-  echo "$*" >&2
-  exit 1
-}
-
-die_with_usage() {
-  echo "$*" >&2
-  usage
-  exit 1
-}
-
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
-}
-
 join_by() {
   local delimiter="$1"
   local joined=""
@@ -56,7 +49,7 @@ fetch_checksum_text() {
   local checksum_file="$asset_prefix-$version.sha256"
   local download_dir
 
-  if curl -fsSL "$checksum_url" 2>/dev/null; then
+  if curl -fsSL "${CURL_OPTS[@]}" "$checksum_url" 2>/dev/null; then
     return
   fi
 
@@ -82,9 +75,6 @@ fetch_checksum_text() {
   rm -rf "$download_dir"
 }
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo_root=$(cd "$script_dir/.." && pwd)
-
 product=${1:-}
 version=${2:-}
 
@@ -104,36 +94,24 @@ if [[ "$#" -ne 2 ]]; then
   die_with_usage "Expected exactly two arguments"
 fi
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$version" =~ $VERSION_PATTERN ]]; then
   die_with_usage "VERSION must look like 0.1.0"
 fi
 
-case "$product" in
-  runfree)
-    formula_path="$repo_root/Formula/runfree.rb"
-    release_repo="genged/runfree"
-    asset_prefix="runfree"
-    platforms=(darwin-arm64 darwin-x64)
-    labels=("macOS arm64" "macOS Intel")
-    ;;
-  capshelf)
-    formula_path="$repo_root/Formula/capshelf.rb"
-    release_repo="genged/capshelf"
-    asset_prefix="capshelf"
-    platforms=(darwin-arm64 darwin-x64 linux-arm64 linux-x64)
-    labels=("macOS arm64" "macOS Intel" "Linux arm64" "Linux x64")
-    ;;
-  *)
-    die "Unknown product: $product"
-    ;;
-esac
+load_product "$product" || die "Unknown product: $product"
+
+formula_path="$repo_root/$product_formula_path"
+release_repo="$product_release_repo"
+asset_prefix="$product_asset_prefix"
+platforms=("${product_platforms[@]}")
+labels=("${product_labels[@]}")
 
 [[ -f "$formula_path" ]] || die "Formula not found: $formula_path"
 
 require_command curl
 require_command tr
 
-checksum_url="https://github.com/$release_repo/releases/download/v$version/$asset_prefix-$version.sha256"
+checksum_url=$(product_checksum_url "$version")
 checksum_text=$(fetch_checksum_text)
 
 checksums=()
@@ -230,10 +208,16 @@ for i in "${!platforms[@]}"; do
   [[ "${url_counts[$i]}" -eq 1 ]] || die "Formula has ${url_counts[$i]} URL entries for $platform; expected 1"
 done
 
+# Checked before the rewrite lands, so a bad formula never reaches disk and every
+# caller is covered rather than just the ones that validate afterwards.
+if command -v ruby >/dev/null 2>&1; then
+  ruby -c "$tmp_formula" >/dev/null || die "Rewritten formula is not valid Ruby"
+fi
+
 mv "$tmp_formula" "$formula_path"
 trap - EXIT
 
-echo "Updated Formula/$asset_prefix.rb for $asset_prefix $version"
+echo "Updated $product_formula_path for $asset_prefix $version"
 for i in "${!platforms[@]}"; do
   echo "  ${labels[$i]}: ${checksums[$i]}"
 done
