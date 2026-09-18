@@ -2,27 +2,27 @@ class Capshelf < Formula
   desc "Manage shared Claude Code and Codex configuration across projects"
   homepage "https://github.com/genged/capshelf"
 
-  version "0.12.0"
+  version "0.13.0"
 
   uses_from_macos "git"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/genged/capshelf/releases/download/v0.12.0/capshelf-0.12.0-darwin-arm64.tar.gz"
-      sha256 "50b830538ee2020dfd1cdf2f93bf76ec30fa97362aff97ae9a039a896a99adf1"
+      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-darwin-arm64.tar.gz"
+      sha256 "c4fde831679bb5a932b1fb739787b3b196c9ee4648556ec2edfd1c40d4886be0"
     else
-      url "https://github.com/genged/capshelf/releases/download/v0.12.0/capshelf-0.12.0-darwin-x64.tar.gz"
-      sha256 "3e6f37bfa4052c08e8d960d5b67bd62c6325a5e61ab92311edea40de71cdccc4"
+      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-darwin-x64.tar.gz"
+      sha256 "f581766260bad938e80ac30607fb265ce87cb7607658b2481498d4de85dd2878"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/genged/capshelf/releases/download/v0.12.0/capshelf-0.12.0-linux-arm64.tar.gz"
-      sha256 "0cc88dc65963d25d8a7b3d73741a6289fceede8a1a9b3dbf15a4b31fc189e685"
+      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-linux-arm64.tar.gz"
+      sha256 "43565dc9820695f8a148257598bfbb4a63c168bcd31d5bc75a2f12151df23421"
     else
-      url "https://github.com/genged/capshelf/releases/download/v0.12.0/capshelf-0.12.0-linux-x64.tar.gz"
-      sha256 "6d37b2c0255c052c0eec82740637131e686785062eb489e9900cd2538081e643"
+      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-linux-x64.tar.gz"
+      sha256 "f5500febdf8c428d02ae294d7606ebde99cba6646bef67d49d02bd0f62428dab"
     end
   end
 
