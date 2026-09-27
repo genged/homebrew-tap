@@ -161,14 +161,13 @@ for _platform in "${platforms[@]}"; do
   url_counts+=("0")
 done
 
-version_count=0
 sha_count=0
 
 while IFS= read -r line || [[ -n "$line" ]]; do
-  if [[ "$line" =~ ^[[:space:]]*version\ \".*\"$ ]]; then
-    version_count=$((version_count + 1))
-    printf '  version "%s"\n' "$version"
-    continue
+  # Homebrew reads the version from the URLs, so an explicit version line would
+  # only be redundant and could fall out of step with them.
+  if [[ "$line" =~ ^[[:space:]]*version\ \" ]]; then
+    die "Formula has an explicit version entry; remove it and let Homebrew read the version from the URLs"
   fi
 
   replaced_url=false
@@ -200,7 +199,6 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   printf '%s\n' "$line"
 done <"$formula_path" >"$tmp_formula"
 
-[[ "$version_count" -eq 1 ]] || die "Formula has $version_count version entries; expected 1"
 [[ "$sha_count" -eq "${#platforms[@]}" ]] || die "Formula has $sha_count sha256 entries; expected ${#platforms[@]}"
 
 for i in "${!platforms[@]}"; do

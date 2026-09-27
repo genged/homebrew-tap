@@ -25,8 +25,8 @@ load_product() {
       product_formula_path="Formula/runfree.rb"
       product_release_repo="genged/runfree"
       product_asset_prefix="runfree"
-      product_platforms=(darwin-arm64 darwin-x64)
-      product_labels=("macOS arm64" "macOS Intel")
+      product_platforms=(darwin-arm64)
+      product_labels=("macOS arm64")
       ;;
     capshelf)
       product_formula_path="Formula/capshelf.rb"

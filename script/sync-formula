@@ -53,12 +53,13 @@ latest_version() {
   printf '%s\n' "${tag#v}"
 }
 
+# The formula has no version entry, so read it from the release download URL.
 formula_version() {
   local line
-  line=$(grep -m1 -E '^[[:space:]]*version "' "$formula_path") ||
-    die "No version entry in $formula_path"
-  line=${line#*\"}
-  printf '%s\n' "${line%%\"*}"
+  line=$(grep -m1 -E "^[[:space:]]*url \"https://github[.]com/$release_repo/releases/download/v[^/]+/" "$formula_path") ||
+    die "No release URL in $formula_path"
+  line=${line#*/releases/download/v}
+  printf '%s\n' "${line%%/*}"
 }
 
 # True when $1 is strictly newer than $2. Compares the numeric X.Y.Z core, then

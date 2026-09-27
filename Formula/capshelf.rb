@@ -2,8 +2,6 @@ class Capshelf < Formula
   desc "Manage shared Claude Code and Codex configuration across projects"
   homepage "https://github.com/genged/capshelf"
 
-  version "0.13.0"
-
   uses_from_macos "git"
 
   on_macos do
@@ -26,23 +24,12 @@ class Capshelf < Formula
     end
   end
 
-  head do
-    url "https://github.com/genged/capshelf.git", branch: "main"
-    depends_on "oven-sh/bun/bun" => :build
-  end
-
   def install
-    if build.head?
-      system "bun", "install", "--frozen-lockfile"
-      system "bun", "run", "build"
-      bin.install "dist/capshelf"
-    else
-      bin.install "capshelf"
-    end
+    bin.install "capshelf"
   end
 
   test do
     assert_equal version.to_s, shell_output("#{bin}/capshelf --version").strip
-    assert_match "manage shared coding-agent config across projects", shell_output("#{bin}/capshelf --help")
+    assert_match "Usage: capshelf", shell_output("#{bin}/capshelf --help")
   end
 end

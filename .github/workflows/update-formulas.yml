@@ -10,10 +10,12 @@ on:
         description: Product to sync
         type: choice
         options:
+          - all
           - capshelf
-        default: capshelf
+          - runfree
+        default: all
       version:
-        description: Version to sync to (defaults to the latest release)
+        description: Version to sync to (defaults to the latest release; needs a single product)
         type: string
         required: false
   # Disabled for now. Uncomment to let a product's release workflow push an update
@@ -33,30 +35,36 @@ on:
 permissions:
   contents: write
 
-# Keyed per product, deliberately not per version. Two runs for the same product
-# edit the same formula lines, so letting them overlap only produces a rebase
-# conflict; serializing them is what actually makes the push safe. Different
-# products touch different files and may overlap freely — sync-formula rebases
-# before pushing, which resolves that case cleanly.
-#
-# The cost is that GitHub keeps just one pending run per group, so a queued run
-# can be replaced by a newer one. For a tap that tracks the latest release that is
-# the right outcome: the survivor re-resolves at run time and lands the newest
-# version, and skipping a superseded intermediate is what we want anyway. To pin
-# an older version deliberately, run script/update-capshelf-formula locally.
-concurrency:
-  group: update-formulas-${{ github.event.inputs.product || github.event.client_payload.product || 'capshelf' }}
-  cancel-in-progress: false
-
 jobs:
   sync:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every product on a schedule or an "all" dispatch; otherwise just the one
+        # named by the dispatch.
+        product: ${{ fromJSON((github.event.inputs.product || github.event.client_payload.product || 'all') == 'all' && '["capshelf","runfree"]' || format('["{0}"]', github.event.inputs.product || github.event.client_payload.product)) }}
+    # Keyed per product, deliberately not per version. Two runs for the same product
+    # edit the same formula lines, so letting them overlap only produces a rebase
+    # conflict; serializing them is what actually makes the push safe. Different
+    # products touch different files and may overlap freely — sync-formula rebases
+    # before pushing, which resolves that case cleanly.
+    #
+    # The cost is that GitHub keeps just one pending run per group, so a queued run
+    # can be replaced by a newer one. For a tap that tracks the latest release that is
+    # the right outcome: the survivor re-resolves at run time and lands the newest
+    # version, and skipping a superseded intermediate is what we want anyway. To pin
+    # an older version deliberately, run script/update-<product>-formula locally.
+    concurrency:
+      group: update-formulas-${{ matrix.product }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync formula
         env:
-          PRODUCT: ${{ github.event.inputs.product || github.event.client_payload.product || 'capshelf' }}
+          PRODUCT: ${{ matrix.product }}
+          REQUESTED_PRODUCT: ${{ github.event.inputs.product || github.event.client_payload.product || 'all' }}
           VERSION: ${{ github.event.inputs.version || github.event.client_payload.version || '' }}
           # update-formula falls back to `gh release download` when the anonymous
           # download fails, and gh has no session on a hosted runner without this.
@@ -65,6 +73,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -n "$VERSION" && "$REQUESTED_PRODUCT" == all ]]; then
+            echo "A version can only be pinned for a single product, not all" >&2
+            exit 1
+          fi
 
           args=(--wait 600 --commit --push)
           if [[ -n "$VERSION" ]]; then
