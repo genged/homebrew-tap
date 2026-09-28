@@ -2,8 +2,6 @@ class Capshelf < Formula
   desc "Manage shared Claude Code and Codex configuration across projects"
   homepage "https://github.com/genged/capshelf"
 
-  uses_from_macos "git"
-
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-darwin-arm64.tar.gz"
