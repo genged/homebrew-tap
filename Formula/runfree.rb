@@ -2,8 +2,8 @@ class Runfree < Formula
   desc "Run coding agents in Docker with network policy and proxy-held credentials"
   homepage "https://github.com/genged/runfree"
 
-  url "https://github.com/genged/runfree/releases/download/v0.5.2/runfree-0.5.2-darwin-arm64.tar.gz"
-  sha256 "30dcb2ce6b815281da477d38a58d779f94ec47601b392f86130dc368819b9de0"
+  url "https://github.com/genged/runfree/releases/download/v0.6.0/runfree-0.6.0-darwin-arm64.tar.gz"
+  sha256 "ebbfa82764f48c79b2f1ccbbbb59c30cb1a9673157e2ea56890ac6ba45654754"
 
   # Release binaries are published for Apple Silicon macOS only.
   depends_on arch: :arm64
