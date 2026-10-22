@@ -4,21 +4,21 @@ class Capshelf < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-darwin-arm64.tar.gz"
-      sha256 "c4fde831679bb5a932b1fb739787b3b196c9ee4648556ec2edfd1c40d4886be0"
+      url "https://github.com/genged/capshelf/releases/download/v0.14.0/capshelf-0.14.0-darwin-arm64.tar.gz"
+      sha256 "0ec9afdedb72cbf43baed2714685ef351f5618d101a1f81140d4f0df7866b73c"
     else
-      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-darwin-x64.tar.gz"
-      sha256 "f581766260bad938e80ac30607fb265ce87cb7607658b2481498d4de85dd2878"
+      url "https://github.com/genged/capshelf/releases/download/v0.14.0/capshelf-0.14.0-darwin-x64.tar.gz"
+      sha256 "9931f4cb42d9bae54a122b6389f2da60631804cbca1bf7fb87d39ccae1f6ccca"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-linux-arm64.tar.gz"
-      sha256 "43565dc9820695f8a148257598bfbb4a63c168bcd31d5bc75a2f12151df23421"
+      url "https://github.com/genged/capshelf/releases/download/v0.14.0/capshelf-0.14.0-linux-arm64.tar.gz"
+      sha256 "4f114d77ea2bfcf8e71c0c946ee5109b9ec243a9dd33e35c74e589c1f50ef619"
     else
-      url "https://github.com/genged/capshelf/releases/download/v0.13.0/capshelf-0.13.0-linux-x64.tar.gz"
-      sha256 "f5500febdf8c428d02ae294d7606ebde99cba6646bef67d49d02bd0f62428dab"
+      url "https://github.com/genged/capshelf/releases/download/v0.14.0/capshelf-0.14.0-linux-x64.tar.gz"
+      sha256 "cbb394d68fc5f9bcf43c2448c852f2bc3c79a91989cb8cc7de188a689432bd77"
     end
   end
 
